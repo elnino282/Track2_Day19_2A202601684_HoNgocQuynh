@@ -1,22 +1,23 @@
 # Reflection — Lab 19
 
-**Tên:** Hồ Ngọc Quỳnh
-**Cohort:** A20
-**Path:** Lite
-**Bonus:** Đã thực hiện — Hybrid AI Memory (`bonus/`)
+**Tên:** Hồ Ngọc Quỳnh  
+**MSSV:** 202601684  
+**Cohort:** A20-K4
+**Path:** Lite  
+**Bonus:** Hybrid AI Memory (`bonus/`)
 
-Trên 50 golden queries, Hybrid đạt Precision@10 cao nhất (78,6%), hơn BM25
-(77,8%) và Vector (73,2%). Với `mixed`, Hybrid thắng ở 100% nhờ RRF kết hợp
-từ khóa và ngữ nghĩa. Với `exact`, BM25 và Hybrid cùng đạt 96,7%; tên riêng,
-mã lỗi hoặc thuật ngữ cần khớp chính xác không cần thêm chi phí vector.
+Trên 50 golden queries, Hybrid đạt Precision@10 cao nhất (78,6%), nhỉnh hơn
+BM25 (77,8%) và Vector (73,2%). Với `mixed`, Hybrid thắng 100% vì RRF kết hợp
+khớp từ khóa với tín hiệu ngữ nghĩa. Với `exact`, BM25 và Hybrid cùng đạt
+96,7%; tên riêng, mã lỗi và thuật ngữ kỹ thuật được lợi từ khớp chính xác.
 
-Ở `paraphrase`, Path Lite dùng `bge-small-en-v1.5` thiên về tiếng Anh nên
-Vector chỉ đạt 24,0%; BM25 đạt 33,3% và Hybrid 32,0%. Điều này cho thấy phải
-chọn model theo ngôn ngữ và đo trên dữ liệu thật. Tôi chỉ dùng pure vector cho
-truy vấn tiếng Việt diễn đạt lại sau khi thay bằng model đa ngôn ngữ. Tôi
-không dùng Hybrid khi BM25 đã đủ cho lookup chính xác, vector đã đủ cho
-semantic search thuần, hoặc ngân sách latency/tài nguyên không cho phép hai
-index.
+Ở `paraphrase`, BM25 đạt 33,3%, Hybrid 32,0% và Vector 24,0%, trái với kỳ vọng
+vector thường thắng truy vấn diễn đạt lại. Nguyên nhân hợp lý là model Lite
+`bge-small-en-v1.5` thiên về tiếng Anh, còn dữ liệu chủ yếu là tiếng Việt.
+Vì vậy, embedding phải được kiểm chứng trên golden set đúng ngôn ngữ; trong
+production tôi sẽ benchmark `bge-m3` hoặc multilingual E5 trước khi re-index.
 
-Điều ngạc nhiên nhất: warm-up và cache vector query giúp Hybrid P99 steady-state
-giảm còn 14,3 ms; không nên trộn cold-start của model vào phép đo này.
+Tôi không dùng Hybrid khi BM25 đã đủ cho lookup chính xác, vector đã đủ cho
+semantic search thuần, hoặc ngân sách latency và bộ nhớ không cho phép duy trì
+hai index. Sau warm-up, Hybrid P99 đạt 14,3 ms; cần tách cold-start khỏi phép
+đo steady-state.

@@ -1,6 +1,6 @@
 # Hybrid Memory cho trợ lý AI cá nhân
 
-**Contributor:** Hồ Ngọc Quỳnh — Cohort A20, Path Lite  
+**Contributor:** Hồ Ngọc Quỳnh — Cohort A20-K4, Path Lite  
 **Phạm vi:** POC local, không gọi LLM thật; `recall()` tạo context sẵn để đưa vào LLM.
 
 ## Kiến trúc và luồng dữ liệu
