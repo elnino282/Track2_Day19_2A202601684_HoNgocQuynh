@@ -16,16 +16,20 @@
 
 # %%
 import _setup  # noqa: F401
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import polars as pl
+import pandas as pd
 
 REPO_ROOT = Path(_setup.__file__).resolve().parent.parent
 FEAST_DIR = REPO_ROOT / "app" / "feast_repo"
 FEAST_DATA = FEAST_DIR / "data"
 FEAST_DATA.mkdir(exist_ok=True)
+# Work around false-negative CPUID detection in restricted Windows sandboxes.
+# This is an official Polars escape hatch and is inherited only by Feast CLI.
+FEAST_ENV = {**os.environ, "POLARS_SKIP_CPU_CHECK": "1"}
 
 # %% [markdown]
 # ## 1. Sinh dữ liệu offline (Parquet) cho 3 feature views
@@ -37,8 +41,8 @@ FEAST_DATA.mkdir(exist_ok=True)
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
-def make_user_profile(n_users: int = 100) -> pl.DataFrame:
-    return pl.DataFrame({
+def make_user_profile(n_users: int = 100) -> pd.DataFrame:
+    return pd.DataFrame({
         "user_id": [f"u_{i:03d}" for i in range(n_users)],
         "reading_speed_wpm": [180 + (i * 7) % 200 for i in range(n_users)],
         "preferred_language": ["vi" if i % 3 != 0 else "en" for i in range(n_users)],
@@ -50,8 +54,8 @@ def make_user_profile(n_users: int = 100) -> pl.DataFrame:
     })
 
 
-def make_item_popularity(n_items: int = 1000) -> pl.DataFrame:
-    return pl.DataFrame({
+def make_item_popularity(n_items: int = 1000) -> pd.DataFrame:
+    return pd.DataFrame({
         "doc_id": [f"item_{i:04d}" for i in range(n_items)],
         "click_count_24h": [(i * 13) % 500 for i in range(n_items)],
         "ctr_7d": [round(((i * 7) % 100) / 100.0, 3) for i in range(n_items)],
@@ -60,8 +64,8 @@ def make_item_popularity(n_items: int = 1000) -> pl.DataFrame:
     })
 
 
-def make_query_velocity(n_users: int = 100) -> pl.DataFrame:
-    return pl.DataFrame({
+def make_query_velocity(n_users: int = 100) -> pd.DataFrame:
+    return pd.DataFrame({
         "user_id": [f"u_{i:03d}" for i in range(n_users)],
         "queries_last_hour": [(i * 11) % 50 for i in range(n_users)],
         "distinct_topics_24h": [1 + (i * 3) % 10 for i in range(n_users)],
@@ -69,9 +73,9 @@ def make_query_velocity(n_users: int = 100) -> pl.DataFrame:
     })
 
 
-make_user_profile().write_parquet(FEAST_DATA / "user_profile.parquet")
-make_item_popularity().write_parquet(FEAST_DATA / "item_popularity.parquet")
-make_query_velocity().write_parquet(FEAST_DATA / "query_velocity.parquet")
+make_user_profile().to_parquet(FEAST_DATA / "user_profile.parquet", index=False)
+make_item_popularity().to_parquet(FEAST_DATA / "item_popularity.parquet", index=False)
+make_query_velocity().to_parquet(FEAST_DATA / "query_velocity.parquet", index=False)
 print(f"Wrote 3 Parquet sources to {FEAST_DATA}")
 for p in sorted(FEAST_DATA.glob("*.parquet")):
     print(f"  {p.name}  {p.stat().st_size/1024:.1f} KB")
@@ -86,6 +90,7 @@ for p in sorted(FEAST_DATA.glob("*.parquet")):
 res = subprocess.run(
     ["feast", "apply"],
     cwd=str(FEAST_DIR),
+    env=FEAST_ENV,
     capture_output=True, text=True, check=False,
 )
 print("STDOUT:")
@@ -94,6 +99,20 @@ if res.stderr:
     print("STDERR:")
     print(res.stderr)
 assert res.returncode == 0, f"feast apply failed: {res.stderr}"
+
+listed = subprocess.run(
+    ["feast", "feature-views", "list"],
+    cwd=str(FEAST_DIR),
+    env=FEAST_ENV,
+    capture_output=True, text=True, check=False,
+)
+print("Registered feature views:")
+print(listed.stdout)
+assert listed.returncode == 0
+for expected_view in (
+    "user_profile_features", "item_popularity_features", "query_velocity_features"
+):
+    assert expected_view in listed.stdout
 
 # %% [markdown]
 # ## 3. `feast materialize-incremental` — load offline → online
@@ -106,6 +125,7 @@ end_dt = NOW.strftime("%Y-%m-%dT%H:%M:%S")
 res = subprocess.run(
     ["feast", "materialize-incremental", end_dt],
     cwd=str(FEAST_DIR),
+    env=FEAST_ENV,
     capture_output=True, text=True, check=False,
 )
 print(res.stdout[-1500:])
@@ -147,7 +167,7 @@ print(f"Single lookup: {single_latency_ms:.2f}ms")
 print({k: v[0] for k, v in features.items()})
 
 # %% [markdown]
-# ## 5. TODO — Batch latency benchmark (100 lookups, P99)
+# ## 5. Batch latency benchmark (100 lookups, P99)
 
 # %%
 latencies: list[float] = []
@@ -182,10 +202,11 @@ else:
 # Đây là cơ chế chính để tránh training-serving skew (deck §6).
 
 # %%
-import pandas as pd
 entity_df = pd.DataFrame({
     "user_id": ["u_001", "u_002", "u_003"],
-    "event_timestamp": [NOW - timedelta(hours=2), NOW - timedelta(hours=1), NOW],
+    # Each timestamp is after that user's offline feature event, so all three
+    # rows have a valid past value while the PIT join still forbids future data.
+    "event_timestamp": [NOW, NOW - timedelta(minutes=30), NOW - timedelta(hours=2)],
 })
 
 historical = fs.get_historical_features(
@@ -196,6 +217,8 @@ historical = fs.get_historical_features(
     ],
 ).to_df()
 print(historical)
+print(f"PIT join shape: {historical.shape[0]} rows × {historical.shape[1]} columns")
+assert historical.shape[0] == 3
 
 # %% [markdown]
 # ## Deliverable evidence
